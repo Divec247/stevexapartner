@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eef3fd">
+<title>STEVEXA Partners</title>
+<link rel="stylesheet" href="style.css">
+<style>
+#splash{position:fixed;inset:0;z-index:99999;background:linear-gradient(#f4f8fe,#dce8fa);display:flex;align-items:center;justify-content:center;transition:opacity .45s ease}
+#splash img{width:100%;height:100%;object-fit:cover;object-position:center}
+#splash.hide{opacity:0;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="splash"><img src="splash.jpg" alt="STEVEXA"></div>
+<div id="app"></div>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+(function () {
+  var start = Date.now(), MIN = 2000;
+  function hide() {
+    var s = document.getElementById('splash');
+    if (!s) return;
+    s.className = 'hide';
+    setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 600);
+  }
+  function ready() { setTimeout(hide, Math.max(0, MIN - (Date.now() - start))); }
+  if (document.readyState === 'complete') ready(); else window.addEventListener('load', ready);
+})();
+</script>
+</body>
+</html>

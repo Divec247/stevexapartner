@@ -1,0 +1,9 @@
+{
+  "appId": "com.stevexa.partners",
+  "appName": "STEVEXA Partners",
+  "webDir": "docs",
+  "backgroundColor": "#1a4d8f",
+  "android": {
+    "allowMixedContent": false
+  }
+}
