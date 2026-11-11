@@ -117,7 +117,7 @@ window.SX_UI_VERSION = 3;
     } }, el('h2', {}, 'Welcome back'), el('p', { class: 'sub' }, 'Sign in with the email and password the IP Owner gave you.'), flashBox(),
       field('Email', el('div', { class: 'in' }, svg(IC_MAIL), email)), field('Password', el('div', { class: 'in' }, svg(IC_LOCK), pw, eye)), btn);
     root.appendChild(el('div', { class: 'hero' }, el('img', { class: 'mk', src: 'logo.png', alt: 'STEVEXA' }), el('h1', {}, 'STEVEXA Partners'), el('span', { class: 'tag' }, 'Partners & Business Developers'), svg(WAVE)));
-    root.appendChild(el('div', { class: 'loginwrap' }, form, el('p', { class: 'regnote' }, 'To register as a partner, contact 08025457275/07057348203'), footer()));
+    root.appendChild(el('div', { class: 'loginwrap' }, form, el('p', { class: 'regnote' }, 'To register/sign-up, contact 08025457275/07057348203'), footer()));
     window.SX_ON_READY && window.SX_ON_READY();
   }
 
