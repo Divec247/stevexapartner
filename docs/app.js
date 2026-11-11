@@ -1,6 +1,6 @@
 /* STEVEXA Partners - screens. All security is enforced by the Apps Script backend; this page only decides what to show.
    Raise SX_UI_VERSION by 1 every time you change the design or wording: installed apps then download the new screens by themselves. */
-window.SX_UI_VERSION = 3;
+window.SX_UI_VERSION = 4;
 (function () {
   'use strict';
   var root = document.getElementById('app');
