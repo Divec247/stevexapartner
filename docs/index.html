@@ -3,29 +3,66 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#eef3fd">
+<meta name="theme-color" content="#0f3a8a">
 <title>STEVEXA Partners</title>
-<link rel="stylesheet" href="style.css">
 <style>
 #splash{position:fixed;inset:0;z-index:99999;background:linear-gradient(#f4f8fe,#dce8fa);display:flex;align-items:center;justify-content:center;transition:opacity .45s ease}
 #splash img{width:100%;height:100%;object-fit:cover;object-position:center}
 #splash.hide{opacity:0;pointer-events:none}
+body{margin:0;background:#eef3fb}
 </style>
 </head>
 <body>
 <div id="splash"><img src="splash.jpg" alt="STEVEXA"></div>
 <div id="app"></div>
+<script src="update.js"></script>
 <script src="config.js"></script>
-<script src="app.js"></script>
 <script>
+/* Loader. In the installed app it starts the newest screens it has (downloaded ones if newer than the built-in ones),
+   then checks GitHub in the background. A downloaded update that fails to start is thrown away on the next launch. */
+(function () {
+  var BASE = (window.STEVEXA_UPDATE_BASE || '').trim();
+  var native = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) || /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && location.protocol !== 'http:';
+  var API_RE = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_\-]+\/exec$/;
+  function ls(k, v) { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} return null; }
+  function ver(t) { var m = /SX_UI_VERSION\s*=\s*(\d+)/.exec(t || ''); return m ? parseInt(m[1], 10) : 0; }
+  function apiOf(t) { var m = /STEVEXA_API\s*=\s*"([^"]*)"/.exec(t || ''); return m && API_RE.test(m[1]) ? m[1] : ''; }
+  function run(css, js) {
+    var st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
+    var sc = document.createElement('script'); sc.textContent = js; document.body.appendChild(sc);
+  }
+  function plain() {            // normal website (GitHub Pages) or fallback: just load the files; keep them fresh with a 5-minute cache key
+    var k = '?v=' + Math.floor(Date.now() / 300000);
+    var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'style.css' + k; document.head.appendChild(l);
+    var s = document.createElement('script'); s.src = 'app.js' + k; document.body.appendChild(s);
+  }
+  var saved = ls('sx_api'); if (saved && API_RE.test(saved)) window.STEVEXA_API = saved;   // a newer server address learned earlier
+  if (!native) return plain();
+  // a cached update that did not finish starting last time is discarded
+  if (ls('sx_boot')) { ls('sx_ui', null); ls('sx_boot', null); }
+  var cached = null; try { cached = JSON.parse(ls('sx_ui') || 'null'); } catch (e) {}
+  Promise.all([fetch('style.css').then(function (r) { return r.text(); }), fetch('app.js').then(function (r) { return r.text(); })]).then(function (b) {
+    var useCache = cached && cached.js && ver(cached.js) > ver(b[1]);
+    var css = useCache ? cached.css : b[0], js = useCache ? cached.js : b[1];
+    if (useCache) ls('sx_boot', String(ver(js)));
+    window.SX_ON_READY = function () { ls('sx_boot', null); };
+    run(css, js);
+    if (BASE) check(Math.max(ver(js), ver(b[1])));
+  }).catch(plain);
+  function get(u) { return fetch(BASE + u + '?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { if (!r.ok) throw 0; return r.text(); }); }
+  function check(have) {
+    get('config.js').then(function (t) { var a = apiOf(t); if (a && a !== window.STEVEXA_API) { ls('sx_api', a); window.STEVEXA_API = a; } }).catch(function () {});
+    Promise.all([get('app.js'), get('style.css')]).then(function (r) {
+      if (ver(r[0]) > have) {
+        ls('sx_ui', JSON.stringify({ js: r[0], css: r[1] }));
+        window.SX_UPDATE_READY = true; if (window.SX_SHOW_UPDATE) window.SX_SHOW_UPDATE();
+      }
+    }).catch(function () {});
+  }
+})();
 (function () {
   var start = Date.now(), MIN = 2000;
-  function hide() {
-    var s = document.getElementById('splash');
-    if (!s) return;
-    s.className = 'hide';
-    setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 600);
-  }
+  function hide() { var s = document.getElementById('splash'); if (!s) return; s.className = 'hide'; setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 600); }
   function ready() { setTimeout(hide, Math.max(0, MIN - (Date.now() - start))); }
   if (document.readyState === 'complete') ready(); else window.addEventListener('load', ready);
 })();
