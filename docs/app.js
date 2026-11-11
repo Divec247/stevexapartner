@@ -158,7 +158,7 @@ window.SX_UI_VERSION = 2;
       });
       var mine = by.developer + by.pilot;
       return el('div', {}, warn, hero('Revenue collected', naira(r.gross), 'From all schools, after every recorded payment'),
-        el('div', { class: 'kpis' }, kpi('Yours (50% + pilot)', naira(mine)), kpi('Pilot schools', naira(by.pilot)), kpi('Business developers', naira(by.bd)), kpi('Partner pool (' + r.config.poolPct + '%)', naira(by.partner))),
+        el('div', { class: 'kpis' }, kpi('Yours (50% + pilot)', naira(mine)), kpi('Pilot schools', naira(by.pilot)), kpi('Business developers', naira(by.bd)), kpi('Partner pool (' + r.config.poolFirstPct + '% / ' + r.config.poolRenewalPct + '%)', naira(by.partner))),
         card('Who gets what', null, rows.length ? table(['Role', 'Name', 'Total', 'To pay out', 'Paid out'], rows, [2, 3, 4]) : empty('No payments recorded yet.')));
     });
   };
@@ -169,7 +169,7 @@ window.SX_UI_VERSION = 2;
       var role = el('select', {}, el('option', { value: 'bd' }, 'Business developer'), el('option', { value: 'partner' }, 'Partner (shares the remaining pool)'));
       var name = el('input', { required: true }), email = el('input', { type: 'email', required: true }), phone = el('input', { type: 'tel' }), label = el('input', { placeholder: 'e.g. DE-TECHPATHSOL, Legal Adviser' });
       var rate = el('input', { type: 'number', step: '0.01', min: '0', max: '10', value: '10' }), pool = el('input', { type: 'number', step: '0.01', min: '0.01', max: '100' });
-      var rateF = field('Commission rate (% of the school payment, max 10)', rate), poolF = field('Share of the remaining pool (%)', pool);
+      var rateF = field('Commission on a first payment (max 10%; renewals pay up to 5%)', rate), poolF = field('Share of the remaining pool (%)', pool);
       function sync() { rateF.style.display = role.value === 'bd' ? '' : 'none'; poolF.style.display = role.value === 'partner' ? '' : 'none'; }
       role.addEventListener('change', sync); sync();
       var btn = el('button', { class: 'btn', type: 'submit' }, 'Create account');
@@ -207,16 +207,15 @@ window.SX_UI_VERSION = 2;
       var note = el('div', { class: 'msg info', style: 'display:none;margin-top:12px' }, 'Pilot school: the whole amount goes to you. Nothing is shared with partners or business developers.');
       sel.addEventListener('change', function () { var s = r.schools.filter(function (x) { return x.id === sel.value; })[0]; note.style.display = s && s.pilot ? '' : 'none'; });
       var amount = el('input', { required: true, inputmode: 'decimal', placeholder: '150000' }), paid = el('input', { type: 'date', required: true, value: new Date().toISOString().slice(0, 10) }),
-        ps = el('input', { type: 'date', required: true }), pe = el('input', { type: 'date', required: true }), lab = el('input', { placeholder: '2026/2027 first term' }), ref = el('input'),
-        com = el('input', { type: 'checkbox', checked: 'checked' });
+        ps = el('input', { type: 'date', required: true }), pe = el('input', { type: 'date', required: true }), lab = el('input', { placeholder: '2026/2027 first term' }), ref = el('input');
       var pbtn = el('button', { class: 'btn', type: 'submit' }, 'Record payment');
       var payForm = el('form', { class: 'card', onsubmit: function (e) {
         e.preventDefault();
-        busy(pbtn, api('payment_add', { schoolId: sel.value, amount: amount.value, paidOn: paid.value, periodStart: ps.value, periodEnd: pe.value, label: lab.value, reference: ref.value, commissionable: com.checked })).then(function (x) {
+        busy(pbtn, api('payment_add', { schoolId: sel.value, amount: amount.value, paidOn: paid.value, periodStart: ps.value, periodEnd: pe.value, label: lab.value, reference: ref.value })).then(function (x) {
           flash(x.ok ? 'ok' : 'err', x.ok ? 'Payment recorded and shared out.' : x.error); render();
         });
       } }, el('h2', {}, 'Record a payment'), el('div', { class: 'grid' }, field('School', sel), field('Amount collected (₦)', amount), field('Date received', paid), field('Period starts', ps), field('Period ends', pe), field('Label (optional)', lab), field('Reference (optional)', ref)), note,
-        el('label', { class: 'chk' }, com, 'New customer: the business developer earns commission'), pbtn);
+        el('p', { class: 'hint', style: 'margin:14px 0 0' }, 'Worked out automatically. A school\u2019s first payment: you 50%, business developer 10%, partners 40%. Every renewal after that: you 50%, business developer 5%, partners 45%.'), pbtn);
       // --- register school (for a business developer, or as a pilot)
       var bdSel = el('select', { required: true }, el('option', { value: '' }, 'Choose…'), el('option', { value: '__pilot__' }, 'PILOT SCHOOL – 100% to me, no business developer'), bds.map(function (b) { return el('option', { value: b.id }, b.name); }));
       var f = {}; ['name', 'town', 'contactName', 'contactPhone', 'contactEmail'].forEach(function (k) { f[k] = el('input', { required: k === 'name' || k === 'contactName' || k === 'contactPhone' }); });
@@ -247,7 +246,7 @@ window.SX_UI_VERSION = 2;
       if (!r.ok) return err(r);
       var list = r.payments.map(function (p) {
         var btn = p.voided ? el('span', { class: 'pill' }, 'Voided') : el('button', { class: 'btn sm red', onclick: function () { var why = prompt('Reason for voiding this payment?'); if (why) api('payment_void', { id: p.id, reason: why }).then(function (x) { flash(x.ok ? 'ok' : 'err', x.ok ? 'Payment voided.' : x.error); render(); }); } }, 'Void');
-        return row('₦', p.school, [sub(p.paidOn + ' · ' + (p.label || 'Payment')), sub('Period ' + p.periodStart + ' → ' + p.periodEnd), sub(p.pilot ? 'Pilot: 100% to you' : p.commissionable ? 'New customer' : 'Renewal / no commission')], naira(p.amountKobo), btn, 'green');
+        return row('₦', p.school, [sub(p.paidOn + ' · ' + (p.label || 'Payment')), sub('Period ' + p.periodStart + ' → ' + p.periodEnd), sub(p.type === 'pilot' ? 'Pilot: 100% to you' : p.type === 'renewal' ? 'Renewal (5% business developer)' : 'First payment (10% business developer)')], naira(p.amountKobo), btn, 'green');
       });
       return card('Payments', null, list.length ? el('div', { class: 'rows' }, list) : empty('No payments yet.'));
     });
@@ -315,7 +314,7 @@ window.SX_UI_VERSION = 2;
     return api('bd_commission').then(function (r) {
       if (!r.ok) return err(r);
       var list = r.lines.map(function (l) { return row('₦', l.school, [sub(l.paidOn), el('span', { class: 'pill ' + l.status }, l.status === 'paid_out' ? 'Paid out ' + l.paidOutOn : 'Waiting to be paid')], naira(l.amountKobo), null, l.status === 'paid_out' ? 'green' : 'orange'); });
-      return el('div', {}, hero('Waiting to be paid', naira(r.totals.pending), 'Your rate: ' + pct(r.rate) + ' of each new-customer payment', 'orange'),
+      return el('div', {}, hero('Waiting to be paid', naira(r.totals.pending), pct(r.rate) + ' on a school\u2019s first payment, ' + pct(Math.min(r.rate, 5)) + ' on every renewal', 'orange'),
         el('div', { class: 'kpis' }, kpi('Already paid out', naira(r.totals.paidOut), 'ok'), kpi('Total earned', naira(r.totals.total))),
         card('My commission', null, list.length ? el('div', { class: 'rows' }, list) : empty('No commission yet. It appears when a school you registered pays.')));
     });
