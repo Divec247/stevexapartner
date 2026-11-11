@@ -1,6 +1,6 @@
 /* STEVEXA Partners - screens. All security is enforced by the Apps Script backend; this page only decides what to show.
    Raise SX_UI_VERSION by 1 every time you change the design or wording: installed apps then download the new screens by themselves. */
-window.SX_UI_VERSION = 2;
+window.SX_UI_VERSION = 3;
 (function () {
   'use strict';
   var root = document.getElementById('app');
@@ -117,7 +117,7 @@ window.SX_UI_VERSION = 2;
     } }, el('h2', {}, 'Welcome back'), el('p', { class: 'sub' }, 'Sign in with the email and password the IP Owner gave you.'), flashBox(),
       field('Email', el('div', { class: 'in' }, svg(IC_MAIL), email)), field('Password', el('div', { class: 'in' }, svg(IC_LOCK), pw, eye)), btn);
     root.appendChild(el('div', { class: 'hero' }, el('img', { class: 'mk', src: 'logo.png', alt: 'STEVEXA' }), el('h1', {}, 'STEVEXA Partners'), el('span', { class: 'tag' }, 'Partners & Business Developers'), svg(WAVE)));
-    root.appendChild(el('div', { class: 'loginwrap' }, form, footer()));
+    root.appendChild(el('div', { class: 'loginwrap' }, form, el('p', { class: 'regnote' }, 'To register as a partner, contact 08025457275/07057348203'), footer()));
     window.SX_ON_READY && window.SX_ON_READY();
   }
 
