@@ -11,16 +11,20 @@
 
 const HEAD = {
   Users:    ['Id', 'Name', 'Email', 'Phone', 'Role', 'Label', 'Rate', 'PoolShare', 'Active', 'PwHash', 'MustChange', 'CreatedAt'],
-  Schools:  ['Id', 'Name', 'NameKey', 'State', 'Town', 'ContactName', 'ContactPhone', 'PhoneKey', 'ContactEmail', 'BdId', 'RegisteredAt', 'ProtectedUntil', 'Deleted'],
+  Schools:  ['Id', 'Name', 'NameKey', 'State', 'Town', 'ContactName', 'ContactPhone', 'PhoneKey', 'ContactEmail', 'BdId', 'RegisteredAt', 'ProtectedUntil', 'Deleted', 'Pilot'],
   Payments: ['Id', 'SchoolId', 'Label', 'AmountKobo', 'PaidOn', 'PeriodStart', 'PeriodEnd', 'Commissionable', 'Voided', 'VoidReason', 'Reference', 'RecordedAt'],
   Shares:   ['Id', 'PaymentId', 'UserId', 'Kind', 'PctBp', 'AmountKobo', 'Status', 'PaidOn'],
   Audit:    ['At', 'UserId', 'Action', 'Detail']
 };
 // Commercial formula (section 15 of the governance pack). Change here only with the IP owner's agreement.
-const DEV_PCT = 50;          // % of gross collected revenue to the IP owner
-const POOL_PCT = 40;         // % of gross collected revenue shared among the partners
-const BD_MAX_PCT = 100 - DEV_PCT - POOL_PCT;   // 10: the most a business developer can be given
+//   a school's FIRST payment : IP owner 50% . business developer 10% . partners' pool 40%
+//   every RENEWAL after that : IP owner 50% . business developer  5% . partners' pool 45%   (for as long as the school keeps paying)
+const DEV_PCT = 50;                          // % of gross collected revenue to the IP owner, always
+const BD_FIRST_PCT = 10, BD_RENEWAL_PCT = 5; // business developer
+const POOL_FIRST_PCT = 40, POOL_RENEWAL_PCT = 45;   // shared among the partners
+const BD_MAX_PCT = BD_FIRST_PCT;             // the most a business developer can be given
 const PROTECTION_DAYS = 90, TOKEN_HOURS = 8, MAX_FAILS = 5, LOCK_MINUTES = 15, PW_ROUNDS = 300, MIN_PW = 10;
+const FOREVER = '2099-12-31';   // a pilot school is never open to business developers
 const ROLES_OWNER_MAY_CREATE = ['bd', 'partner'];
 
 /* ───────────────────────── one-time setup (run from the editor) ───────────────────────── */
@@ -56,6 +60,13 @@ function setupOwner() {
   Logger.log('Owner created: ' + email);
 }
 
+/** Run ONCE after pasting this newer version into an existing deployment: adds the new 'Pilot' column. Safe to run again. */
+function upgrade() {
+  const sh = db_().getSheetByName('Schools'), h = HEAD.Schools;
+  sh.getRange(1, 1, 1, h.length).setValues([h]);
+  Logger.log('Schools sheet upgraded: Pilot column is ready.');
+}
+
 /* ───────────────────────── web entry points ───────────────────────── */
 
 function doGet() {
@@ -83,6 +94,7 @@ const ACTIONS = {
   users_list: { roles: ['owner'] }, user_create: { roles: ['owner'], write: true }, user_update: { roles: ['owner'], write: true },
   user_reset_password: { roles: ['owner'], write: true },
   schools_all: { roles: ['owner'] }, school_register_for: { roles: ['owner'], write: true },
+  school_register_pilot: { roles: ['owner'], write: true }, school_set_pilot: { roles: ['owner'], write: true },
   payment_add: { roles: ['owner'], write: true }, payment_void: { roles: ['owner'], write: true }, payments_list: { roles: ['owner'] },
   payout_mark: { roles: ['owner'], write: true }, owner_summary: { roles: ['owner'] }, audit_list: { roles: ['owner'] },
   // business developer
@@ -187,7 +199,7 @@ const FN_ = {
     return { ok: true, schools: rows_('Schools').filter(notDeleted_).map(function (s) {
       const st = schoolStatus_(s, pays);
       return { id: s.Id, name: s.Name, state: s.State, town: s.Town, contactName: s.ContactName, contactPhone: s.ContactPhone, contactEmail: s.ContactEmail,
-        bd: users[s.BdId] ? users[s.BdId].Name : '', bdId: s.BdId, registeredAt: s.RegisteredAt, status: st.code, statusLabel: st.label };
+        bd: users[s.BdId] ? users[s.BdId].Name : '', bdId: s.BdId, pilot: s.Pilot === 'TRUE', registeredAt: s.RegisteredAt, status: st.code, statusLabel: st.label };
     }) };
   },
 
@@ -197,11 +209,29 @@ const FN_ = {
     return registerSchool_(u, d, bd);
   },
 
+  /* A pilot school: the owner keeps 100% of its revenue. No business developer, no partners. */
+  school_register_pilot: function (u, d) { return registerSchool_(u, d, null, true); },
+
+  school_set_pilot: function (u, d) {
+    const s = findRow_('Schools', 'Id', d.schoolId);
+    if (!s || !notDeleted_(s)) fail_('School not found.');
+    const on = d.pilot === true;
+    if (on === (s.Pilot === 'TRUE')) fail_(on ? 'This school is already a pilot school.' : 'This school is not a pilot school.');
+    s.Pilot = on ? 'TRUE' : 'FALSE';
+    s.ProtectedUntil = on ? FOREVER : addDays_(today_(), PROTECTION_DAYS);
+    put_('Schools', s);
+    audit_(u, on ? 'school_made_pilot' : 'school_made_regular', s.Name + ' (applies to payments recorded from now on)');
+    return { ok: true };
+  },
+
   payments_list: function () {
-    const schools = byId_(rows_('Schools')), shares = rows_('Shares');
-    return { ok: true, payments: rows_('Payments').map(function (p) {
-      return { id: p.Id, school: schools[p.SchoolId] ? schools[p.SchoolId].Name : '?', label: p.Label, amountKobo: num_(p.AmountKobo), paidOn: p.PaidOn,
+    const schools = byId_(rows_('Schools')), shares = rows_('Shares'), pays = rows_('Payments');
+    return { ok: true, payments: pays.map(function (p) {
+      const isPilotPay = shares.some(function (s) { return s.PaymentId === p.Id && s.Kind === 'pilot'; });
+      const earlier = pays.some(function (q) { return q.SchoolId === p.SchoolId && Number(q.Id) < Number(p.Id) && q.Voided !== 'TRUE' && !shares.some(function (x) { return x.PaymentId === q.Id && x.Kind === 'pilot'; }); });
+      return { type: isPilotPay ? 'pilot' : earlier ? 'renewal' : 'first', id: p.Id, school: schools[p.SchoolId] ? schools[p.SchoolId].Name : '?', label: p.Label, amountKobo: num_(p.AmountKobo), paidOn: p.PaidOn,
         periodStart: p.PeriodStart, periodEnd: p.PeriodEnd, commissionable: p.Commissionable === 'TRUE', voided: p.Voided === 'TRUE', reference: p.Reference,
+        pilot: shares.some(function (s) { return s.PaymentId === p.Id && s.Kind === 'pilot'; }),
         anyPaidOut: shares.some(function (s) { return s.PaymentId === p.Id && s.Status === 'paid_out'; }) };
     }).reverse() };
   },
@@ -218,16 +248,18 @@ const FN_ = {
       Commissionable: commissionable ? 'TRUE' : 'FALSE', Voided: 'FALSE', VoidReason: '', Reference: clip_(d.reference, 120), RecordedAt: now_() });
     const users = rows_('Users');
     const owner = users.filter(function (x) { return x.Role === 'owner'; })[0];
-    const bd = commissionable ? users.filter(function (x) { return x.Id === school.BdId && x.Role === 'bd'; })[0] : null;
+    const isPilot = school.Pilot === 'TRUE';
+    const bd = isPilot ? null : commissionable ? users.filter(function (x) { return x.Id === school.BdId && x.Role === 'bd'; })[0] : null;
     const partners = users.filter(function (x) { return x.Role === 'partner' && x.Active === 'TRUE'; });
-    const lines = splitPayment_(amount, owner.Id, bd ? { id: bd.Id, rate: num_(bd.Rate) } : null,
-      partners.map(function (x) { return { id: x.Id, poolShare: num_(x.PoolShare) }; }));
+    const isRenewal = !isPilot && hasEarlierSharedPayment_(school.Id, pay.Id);
+    const lines = isPilot ? splitPilot_(amount, owner.Id) : splitPayment_(amount, owner.Id, bd ? { id: bd.Id, rate: num_(bd.Rate) } : null,
+      partners.map(function (x) { return { id: x.Id, poolShare: num_(x.PoolShare) }; }), isRenewal);
     lines.forEach(function (l) {
       add_('Shares', { PaymentId: pay.Id, UserId: l.userId, Kind: l.kind, PctBp: String(l.pctBp), AmountKobo: String(l.amountKobo),
         Status: l.kind === 'unallocated' ? 'unallocated' : 'pending', PaidOn: '' });
     });
-    audit_(u, 'payment_added', school.Name + ' ' + amount + ' kobo');
-    return { ok: true, id: pay.Id, lines: lines };
+    audit_(u, 'payment_added', school.Name + ' ' + amount + ' kobo' + (isPilot ? ' (pilot: 100% owner)' : isRenewal ? ' (renewal)' : ' (first payment)'));
+    return { ok: true, id: pay.Id, lines: lines, type: isPilot ? 'pilot' : isRenewal ? 'renewal' : 'first' };
   },
 
   payment_void: function (u, d) {
@@ -266,7 +298,7 @@ const FN_ = {
       per[k].total += a; if (s.Status === 'paid_out') per[k].paidOut += a; else if (s.Status === 'pending') per[k].pending += a;
     });
     const out = Object.keys(per).map(function (k) { const r = per[k]; r.name = users[r.userId] ? users[r.userId].Name : '?'; r.label = users[r.userId] ? users[r.userId].Label : ''; return r; });
-    return { ok: true, gross: grossKobo_(), rows: out, config: { devPct: DEV_PCT, poolPct: POOL_PCT, bdMaxPct: BD_MAX_PCT }, poolShareTotal: poolShareTotal_() };
+    return { ok: true, gross: grossKobo_(), rows: out, config: { devPct: DEV_PCT, poolFirstPct: POOL_FIRST_PCT, poolRenewalPct: POOL_RENEWAL_PCT, bdFirstPct: BD_FIRST_PCT, bdRenewalPct: BD_RENEWAL_PCT }, poolShareTotal: poolShareTotal_() };
   },
 
   audit_list: function () {
@@ -311,14 +343,15 @@ const FN_ = {
   partner_summary: function (u) {
     const users = byId_(rows_('Users')), sh = liveShares_(), pays = rows_('Payments'), schools = byId_(rows_('Schools'));
     const see = PropertiesService.getScriptProperties().getProperty('PARTNERS_SEE_EACH_OTHER') !== 'FALSE';
-    const gross = grossKobo_();
+    const pilotPays = {}; rows_('Shares').forEach(function (x) { if (x.Kind === 'pilot' && x.Status !== 'void') pilotPays[x.PaymentId] = 1; });
+    const gross = rows_('Payments').filter(function (p) { return p.Voided !== 'TRUE' && !pilotPays[p.Id]; }).reduce(function (a, p) { return a + num_(p.AmountKobo); }, 0);   // pilot-school revenue is the owner's private business
     const sum = function (f) { return sh.filter(f).reduce(function (a, x) { return a + num_(x.AmountKobo); }, 0); };
     const pool = sum(function (x) { return x.Kind === 'partner'; });
     const mine = sh.filter(function (x) { return x.UserId === u.Id && x.Kind === 'partner'; });
     const table = [
       { name: 'IP Owner (developer)', rule: DEV_PCT + '% of gross', kobo: sum(function (x) { return x.Kind === 'developer'; }) },
-      { name: 'Business developers', rule: 'up to ' + BD_MAX_PCT + '% of new-customer revenue', kobo: sum(function (x) { return x.Kind === 'bd'; }) },
-      { name: 'Remaining pool', rule: POOL_PCT + '% of gross', kobo: pool, pool: true }
+      { name: 'Business developers', rule: BD_FIRST_PCT + '% first payment, ' + BD_RENEWAL_PCT + '% renewals', kobo: sum(function (x) { return x.Kind === 'bd'; }) },
+      { name: 'Remaining pool', rule: POOL_FIRST_PCT + '% first payment, ' + POOL_RENEWAL_PCT + '% renewals', kobo: pool, pool: true }
     ];
     const partnerRows = [];
     rows_('Users').filter(function (x) { return x.Role === 'partner'; }).forEach(function (x) {
@@ -339,12 +372,13 @@ const FN_ = {
 
 /** Returns the lines for ONE collected payment. Whole kobo; rounding dust and any unused business-developer
  *  percentage stay in an 'unallocated' line the owner can see, so the lines always add up to the payment exactly. */
-function splitPayment_(amountKobo, ownerId, bd, partners) {
+function splitPayment_(amountKobo, ownerId, bd, partners, isRenewal) {
   const lines = [], bp = function (pctBp) { return Math.floor(amountKobo * pctBp / 10000); };
+  const bdCap = isRenewal ? BD_RENEWAL_PCT : BD_FIRST_PCT, poolPct = isRenewal ? POOL_RENEWAL_PCT : POOL_FIRST_PCT;
   lines.push({ userId: ownerId, kind: 'developer', pctBp: DEV_PCT * 100, amountKobo: bp(DEV_PCT * 100) });
-  if (bd) { const r = Math.round(Math.min(Math.max(bd.rate, 0), BD_MAX_PCT) * 100); lines.push({ userId: bd.id, kind: 'bd', pctBp: r, amountKobo: bp(r) }); }
+  if (bd) { const r = Math.round(Math.min(Math.max(bd.rate, 0), bdCap) * 100); lines.push({ userId: bd.id, kind: 'bd', pctBp: r, amountKobo: bp(r) }); }
   partners.forEach(function (p) {
-    const r = Math.round(POOL_PCT * p.poolShare);        // percent of gross, in basis points
+    const r = Math.round(poolPct * p.poolShare);        // percent of gross, in basis points
     if (r > 0) lines.push({ userId: p.id, kind: 'partner', pctBp: r, amountKobo: bp(r) });
   });
   const used = lines.reduce(function (a, l) { return a + l.amountKobo; }, 0);
@@ -352,9 +386,20 @@ function splitPayment_(amountKobo, ownerId, bd, partners) {
   return lines;
 }
 
+/** True when this school already has an earlier payment (not voided, not a pilot payment) that was shared the normal way. */
+function hasEarlierSharedPayment_(schoolId, thisPaymentId) {
+  const shares = rows_('Shares');
+  return rows_('Payments').some(function (p) {
+    return p.SchoolId === schoolId && p.Id !== thisPaymentId && p.Voided !== 'TRUE' &&
+      !shares.some(function (x) { return x.PaymentId === p.Id && x.Kind === 'pilot'; });
+  });
+}
+
+function splitPilot_(amountKobo, ownerId) { return [{ userId: ownerId, kind: 'pilot', pctBp: 10000, amountKobo: amountKobo }]; }
+
 /* ───────────────────────── schools ───────────────────────── */
 
-function registerSchool_(actor, d, bd) {
+function registerSchool_(actor, d, bd, pilot) {
   const name = clip_(d.name, 200), state = clip_(d.state, 60), phone = clip_(d.contactPhone, 40);
   if (!name) fail_("Enter the school's name.");
   if (!state) fail_("Choose the school's state.");
@@ -369,12 +414,18 @@ function registerSchool_(actor, d, bd) {
       fail_('This school is already registered on STEVEXA and is protected, so it cannot be registered again.');
   });
   const s = add_('Schools', { Name: name, NameKey: key, State: state, Town: clip_(d.town, 120), ContactName: clip_(d.contactName, 120), ContactPhone: phone, PhoneKey: pk,
-    ContactEmail: email, BdId: bd.Id, RegisteredAt: now_(), ProtectedUntil: addDays_(today_(), PROTECTION_DAYS), Deleted: 'FALSE' });
-  audit_(actor, 'school_registered', name + ' (' + bd.Name + ')');
+    ContactEmail: email, BdId: pilot ? '' : bd.Id, RegisteredAt: now_(), ProtectedUntil: pilot ? FOREVER : addDays_(today_(), PROTECTION_DAYS), Deleted: 'FALSE', Pilot: pilot ? 'TRUE' : 'FALSE' });
+  audit_(actor, pilot ? 'pilot_school_registered' : 'school_registered', name + (pilot ? ' (pilot: 100% owner)' : ' (' + bd.Name + ')'));
   return { ok: true, id: s.Id };
 }
 
 function schoolStatus_(s, pays) {
+  const st = schoolStatusCore_(s, pays);
+  if (s.Pilot !== 'TRUE') return st;
+  const label = st.code === 'paid' ? 'Pilot \u00B7 paid until ' + st.periodEnd : st.code === 'expired' ? 'Pilot \u00B7 ended ' + st.periodEnd : 'Pilot school (100% owner)';
+  return { code: 'pilot', label: label, periodEnd: st.periodEnd, daysLeft: st.daysLeft };
+}
+function schoolStatusCore_(s, pays) {
   const paid = pays.filter(function (p) { return p.SchoolId === s.Id && p.Voided !== 'TRUE'; });
   const t = today_();
   if (paid.length) {
